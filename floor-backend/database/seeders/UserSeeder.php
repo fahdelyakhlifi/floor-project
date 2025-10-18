@@ -1,0 +1,22 @@
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+use App\Models\User;
+
+class UserSeeder extends Seeder
+{
+    public function run()
+    {
+        User::create([
+            'name' => 'Fahd',
+            'email' => 'test@gmail.com',
+            'email_verified_at' => now(),
+            'password' => Hash::make('123123'),
+            'remember_token' => Str::random(10),
+        ]);
+    }
+}
