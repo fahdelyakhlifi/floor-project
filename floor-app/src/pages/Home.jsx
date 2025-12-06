@@ -115,19 +115,18 @@ const Home = () => {
 
             <motion.h1 variants={itemVariants} className="text-5xl sm:text-7xl lg:text-8xl font-bold mb-8">
               <span className="bg-gradient-to-r from-white to-slate-200 bg-clip-text text-transparent">
-                Floor Designer
+                Floor <span className="bg-gradient-to-r from-[#ADFAFF] via-[#80A8FF] to-[#ADFAFF] bg-clip-text text-transparent">
+              Designer
+              </span> 
               </span>
-              <br />
-              <span className="bg-gradient-to-r from-[#ADFAFF] via-[#80A8FF] to-[#ADFAFF] bg-clip-text text-transparent">
-                Pro
-              </span>
+              
             </motion.h1>
 
             <motion.p
               variants={itemVariants}
               className="text-xl sm:text-2xl text-slate-300 mb-12 max-w-3xl mx-auto leading-relaxed"
             >
-              Create stunning <span className="text-[#ADFAFF] font-semibold">3D floor designs</span> in real-time with
+              Create stunning <span className="text-[#ADFAFF] font-semibold"> floor designs</span> in real-time with
               our professional design tool.
               <span className="text-[#80A8FF]"> Visualize instantly</span> and transform your spaces with architectural
               precision.

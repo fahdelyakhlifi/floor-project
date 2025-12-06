@@ -1,4 +1,4 @@
-"use client"
+//C:\Users\Fahd-EL\Desktop\projet stage\Projet Floor\floor-app\src\components\Navbar.jsx
 
 import { Link } from "react-router-dom"
 import { useState } from "react"
@@ -10,12 +10,12 @@ export default function Navbar() {
 
   const navItems = [
     { to: "/", label: "Home", icon: Home },
-    { to: "/decoration", label: "Design", icon: Palette },
+    { to: "/decoration", label: "decoration", icon: Palette },
     { to: "/contact", label: "Contact", icon: Mail },
   ]
 
   return (
-    <nav className="bg-gradient-to-r from-slate-900 to-slate-800 shadow-2xl sticky top-0 z-50 border-b border-slate-700/50">
+    <nav className="bg-gradient-to-r from-slate-900 to-slate-800 shadow-2xl fixed top-0 left-0 right-0 z-50 border-b border-slate-700/50">
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           {/* Logo */}
@@ -25,7 +25,7 @@ export default function Navbar() {
               className="w-10 h-10 bg-gradient-to-br from-[#ADFAFF] to-[#80A8FF] rounded-xl shadow-lg group-hover:shadow-[#ADFAFF]/50 transition-all"
             />
             <span className="text-2xl font-bold bg-gradient-to-r from-[#ADFAFF] to-[#80A8FF] bg-clip-text text-transparent">
-              Floor Designer Pro
+              Floor Designer
             </span>
           </Link>
 
