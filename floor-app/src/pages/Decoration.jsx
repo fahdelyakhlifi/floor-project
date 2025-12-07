@@ -22,8 +22,11 @@ import {
   Droplet,
   Waves,
   MinusSquare,
+  Search
 } from "lucide-react"
 import { Stage, Layer, Line, Rect, Group, Text, Transformer, Circle } from "react-konva"
+import { fetchTemplates } from "../api/templatesApi"
+
 
 /* ------------------------- Constants & Palettes ------------------------- */
 const NAV_HEIGHT = 72
@@ -59,14 +62,7 @@ const CUSTOM_COLORS = [
 
 const MARKER_COLOR = "#3b82f6"
 
-const TEMPLATE_PLACEHOLDERS = [
-  { id: "tpl1", name: "Marble A (placeholder)" },
-  { id: "tpl2", name: "Granite B (placeholder)" },
-  { id: "tpl3", name: "Terrazzo C (placeholder)" },
-  { id: "tpl4", name: "Mosaic D (placeholder)" },
-  { id: "tpl5", name: "Slate E (placeholder)" },
-  { id: "tpl6", name: "Travertine F (placeholder)" },
-]
+
 
 const FOUR_BASE_COLORS = [
   { name: "tan", value: "#D2B48C" },
@@ -102,6 +98,20 @@ const Decoration = () => {
 
   const [showBaseSwatchModal, setShowBaseSwatchModal] = useState(false)
   const [showAddColorCard, setShowAddColorCard] = useState(false)
+
+
+  const [templates, setTemplates] = useState([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [templatesError, setTemplatesError] = useState(null)
+  const [templateSearch, setTemplateSearch] = useState("")
+
+  const filteredTemplates = useMemo(() => {
+  const q = templateSearch.trim().toLowerCase()
+  if (!q) return templates
+  return templates.filter((t) =>
+    (t.name || "").toLowerCase().includes(q)
+  )
+}, [templates, templateSearch])
 
   /* ------------------------- App state (rooms / menus / sidebar) ------------------------- */
   const [showMenu, setShowMenu] = useState(false)
@@ -314,6 +324,33 @@ const Decoration = () => {
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
   }, [selectedShapeId])
+
+
+  useEffect(() => {
+  // ila ma7linaش المودال، ما ندير والو
+  if (!showTemplatePicker) return
+
+  const loadTemplates = async () => {
+    try {
+      setTemplatesLoading(true)
+      setTemplatesError(null)
+
+      const data = await fetchTemplates()
+      // نتأكد أنه array
+      const arr = Array.isArray(data) ? data : []
+
+      setTemplates(arr)
+    } catch (err) {
+      console.error("Error fetching templates in Decoration", err)
+      setTemplatesError("Could not load templates.")
+      setTemplates([])
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }
+
+  loadTemplates()
+}, [showTemplatePicker])
 
   /* ------------------------- Drawing handlers ------------------------- */
   const handlePointerDown = (e) => {
@@ -1141,36 +1178,117 @@ const Decoration = () => {
       )}
 
       {/* Template picker, color pickers, add color modal, create room modal, delete modal are kept unchanged semantically */}
-      {showTemplatePicker && designMode === "chip" && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50" style={{ paddingTop: NAV_HEIGHT + MODAL_GAP }}>
-          <div className="bg-white rounded-2xl shadow-2xl p-6 w-[min(720px,90vw)]">
-            <h3 className="text-2xl font-bold text-gray-900 mb-4 text-center">Choose a Standard Blend (Templates)</h3>
-            <p className="text-sm text-gray-500 mb-4 text-center">Placeholders — choose a template.</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {TEMPLATE_PLACEHOLDERS.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  onClick={() => {
-                    setSelectedTemplate(tpl)
-                    setShowTemplatePicker(false)
-                    console.log(`Template ${tpl.name} selected`)
-                    setChipView({ scale: 1, pos: { x: 0, y: 0 } })
-                  }}
-                  className={`border rounded-xl p-4 text-left hover:bg-gray-50 ${selectedTemplate?.id === tpl.id ? "border-blue-500" : "border-gray-200"}`}
-                >
-                  <div className="h-24 mb-3 rounded-lg bg-gradient-to-br from-gray-100 to-gray-200 border border-dashed border-gray-300 flex items-center justify-center text-xs text-gray-500">Placeholder</div>
-                  <div className="font-medium text-gray-900 text-sm">{tpl.name}</div>
-                  <div className="text-xs text-gray-500">ID: {tpl.id}</div>
-                </button>
-              ))}
-            </div>
-            <div className="mt-6 flex justify-center gap-3">
-              <button onClick={() => setShowTemplatePicker(false)} className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300">Close</button>
-              {selectedTemplate && (<button onClick={() => { setShowTemplatePicker(false); setShowColorPicker(true) }} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">Next: Add Colors</button>)}
+{showTemplatePicker && designMode === "chip" && (
+  <div className="fixed inset-0 z-50 flex justify-center items-start md:items-center backdrop-blur-md bg-black/20">
+    <div className="mt-10 md:mt-0 w-full flex justify-center">
+      <div
+        className="bg-white rounded-2xl w-[min(720px,94vw)] max-w-[720px] shadow-2xl p-5 md:p-6 mx-4 flex flex-col transform transition-all duration-200 scale-100"
+        style={{ maxHeight: "calc(100vh - 80px)" }}
+      >
+        {/* HEADER + SEARCH */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex-1 flex flex-col items-center gap-2">
+            <h2 className="text-lg md:text-xl font-semibold">
+              Templates Library
+            </h2>
+            <p className="text-xs md:text-sm text-gray-500">
+              Tap or click a template to load it
+            </p>
+
+            <div className="w-full max-w-md mt-2">
+              <div className="relative group transition-all">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-gray-700 transition-colors">
+                  <Search className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  value={templateSearch}
+                  onChange={(e) => setTemplateSearch(e.target.value)}
+                  placeholder="Search templates..."
+                  className="w-full pl-9 pr-3 py-2 rounded-full border border-gray-200 text-xs md:text-sm outline-none
+                             focus:ring-2 focus:ring-gray-300 focus:border-gray-400
+                             transition-all shadow-sm focus:shadow-md"
+                />
+              </div>
             </div>
           </div>
+
+          <button
+            onClick={() => setShowTemplatePicker(false)}
+            className="ml-2 md:ml-4 text-gray-400 hover:text-gray-700 p-2 rounded"
+            aria-label="Close"
+          >
+            ✕
+          </button>
         </div>
-      )}
+
+        {/* CONTENT */}
+        <div
+          className="overflow-y-auto"
+          style={{ maxHeight: "calc(100vh - 200px)" }}
+        >
+          {templatesLoading && (
+            <div className="text-center text-gray-500 text-sm py-10">
+              Loading templates...
+            </div>
+          )}
+
+          {!templatesLoading && templatesError && (
+            <div className="text-center text-red-500 text-sm py-10">
+              {templatesError}
+            </div>
+          )}
+
+          {!templatesLoading &&
+            !templatesError &&
+            filteredTemplates.length === 0 && (
+              <div className="text-center text-gray-500 text-sm py-10">
+                No templates found.
+              </div>
+            )}
+
+          {!templatesLoading &&
+            !templatesError &&
+            filteredTemplates.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 md:gap-6">
+                {filteredTemplates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedTemplate(tpl)       
+                      setShowTemplatePicker(false)      
+                      console.log("Template selected in Decoration:", tpl.name)
+                      setChipView({ scale: 1, pos: { x: 0, y: 0 } })
+                    }}
+                    className="group relative flex flex-col items-center gap-2 p-2 rounded-lg hover:shadow-md transition-all bg-white"
+                  >
+                    <div className="relative w-24 h-24 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-xl shadow-sm border border-gray-200 overflow-hidden bg-gray-50 flex items-center justify-center transition-transform group-hover:-translate-y-0.5">
+                      {tpl.thumbnail ? (
+                        <img
+                          src={tpl.thumbnail}
+                          alt={tpl.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-[11px] text-gray-400 text-center px-1">
+                          No preview
+                        </span>
+                      )}
+                    </div>
+
+                    <span className="text-[11px] md:text-sm text-gray-900 font-medium truncate max-w-[90px] md:max-w-[120px] text-center">
+                      {tpl.name || "Untitled"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
       {showFourBasePicker && designMode === "chip" && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50" style={{ paddingTop: NAV_HEIGHT + MODAL_GAP }}>

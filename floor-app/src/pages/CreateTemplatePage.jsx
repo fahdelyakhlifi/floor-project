@@ -1,24 +1,7 @@
 // src/pages/CreateTemplatePage.jsx
-import React, {
-  useEffect,
-  useRef,
-  useState,
-  useCallback,
-} from "react";
-import {
-  Lock,
-  Unlock,
-  Trash2,
-  Plus,
-  Save,
-  Image as ImageIcon,
-  FolderOpen,
-  Pencil,
-  Search,
-  Download,
-  Upload,
-  ChevronDown,
-} from "lucide-react";
+import React, {useEffect,useRef,useState,useCallback,} from "react";
+import {Lock,Unlock,Trash2,Plus,Save,Image as ImageIcon,FolderOpen,Pencil,Search,Download,Upload,ChevronDown,} from "lucide-react";
+import { fetchTemplates, createTemplate, deleteTemplateApi } from "../api/templatesApi";
 
 /* --------------------------------------------------------------------------
    1) UTILITAIRES GÉNÉRAUX (RNG, clamp, uid)
@@ -194,22 +177,18 @@ export default function CreateTemplatePage() {
   const [seed, setSeed] = useState(12345);
 
   // Couleurs globales
-  const [background, setBackground] = useState("#F7FBFF");
+// Couleurs globales
+  const BACKGROUND_COLOR = "#FFFFFF";
   const [palette, setPalette] = useState(DEFAULT_PALETTE);
+
 
   // Modals (Add Color, Templates Library)
   const [showAddColor, setShowAddColor] = useState(false);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
 
   // Templates stockés en localStorage
-  const [templates, setTemplates] = useState(() => {
-    try {
-      const raw = localStorage.getItem("crt_templates_v1");
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+  const [templates, setTemplates] = useState([]);
+
 
   // Nom du template courant
   const [templateName, setTemplateName] = useState("");
@@ -308,7 +287,7 @@ export default function CreateTemplatePage() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Fond
-    ctx.fillStyle = background;
+    ctx.fillStyle =  BACKGROUND_COLOR;
     ctx.fillRect(0, 0, previewSize, previewSize);
 
     // Dessin de chaque shape
@@ -333,7 +312,6 @@ export default function CreateTemplatePage() {
     cachedItems,
     minSize,
     maxSize,
-    background,
     palette,
     shapeType,
     widthScale,
@@ -444,13 +422,30 @@ export default function CreateTemplatePage() {
      5.5) useEffect : génération + dessin + comportement menu export
      ------------------------- */
 
+    // Charger les templates depuis l'API Laravel au chargement de la page
+ // Générer les items à chaque changement de paramètres
   useEffect(() => {
     generateItems();
   }, [generateItems]);
 
+  // Redessiner le canvas quand les items ou paramètres changent
   useEffect(() => {
     drawCanvas();
   }, [drawCanvas]);
+
+  // Charger les templates depuis l'API Laravel au chargement de la page
+  useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const data = await fetchTemplates();
+        setTemplates(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Error fetching templates", err);
+      }
+    };
+
+    loadTemplates();
+  }, []);
 
   useEffect(() => {
     if (!showExportMenu) return;
@@ -472,6 +467,7 @@ export default function CreateTemplatePage() {
       document.removeEventListener("touchstart", handleClickOutside);
     };
   }, [showExportMenu]);
+
 
   /* --------------------------------------------------------------------------
      6) GESTION PALETTE (normalisation, lock, edit, add, remove)
@@ -593,11 +589,12 @@ export default function CreateTemplatePage() {
      7) GESTION TEMPLATES (save, load, export, import, delete)
      -------------------------------------------------------------------------- */
 
-  function buildTemplateObject() {
+    function buildTemplateObject() {
     const canvas = canvasRef.current;
     const thumbnail = canvas ? canvas.toDataURL("image/png") : null;
+
     return {
-      id: uid(),
+      // id o createdAt ghadi yjiw mn Laravel
       name: templateName.trim(),
       category: "",
       thumbnail,
@@ -616,20 +613,39 @@ export default function CreateTemplatePage() {
         density,
         seed,
       },
-      createdAt: new Date().toISOString(),
     };
   }
 
-  function saveTemplate() {
-    if (!templateName || templateName.trim().length === 0) {
-      return;
-    }
-    const tpl = buildTemplateObject();
-    const next = [tpl, ...templates];
-    setTemplates(next);
-    localStorage.setItem("crt_templates_v1", JSON.stringify(next));
-    alert("Template saved locally.");
+
+  async function saveTemplate() {
+  if (!templateName || templateName.trim().length === 0) {
+    return;
   }
+
+  try {
+    const tpl = buildTemplateObject();
+    const saved = await createTemplate(tpl);
+    setTemplates((prev) => [saved, ...prev]);
+    alert("Template saved to database.");
+  } catch (err) {
+    console.error("Error saving template", err);
+
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    const msg = err?.message;
+    const code = err?.code;
+
+    alert(
+      "Error while saving template to database:\n" +
+        "status: " + status + "\n" +
+        "code: " + code + "\n" +
+        "message: " + msg + "\n" +
+        "data: " + JSON.stringify(data || {})
+    );
+  }
+}
+
+
 
   function exportPNG() {
     const canvas = canvasRef.current;
@@ -666,16 +682,21 @@ export default function CreateTemplatePage() {
     const tpl = buildTemplateObject();
     exportJSONTemplate(tpl);
   }
-
   function loadTemplate(tpl) {
+    // name
     setTemplateName(tpl.name || "");
+
+    // palette
     setPalette(
       (tpl.palette || []).map((p) => ({
         ...p,
         locked: false,
       }))
     );
-    const pat = tpl.patternParams || {};
+
+    // هنا أهم حاجة: نقراو جوج الاحتمالات
+    const pat = tpl.patternParams || tpl.pattern_params || {};
+
     setShapeType(pat.shapeType || "flakes");
     setWidthScale(pat.widthScale || 1);
     setHeightScale(pat.heightScale || 1);
@@ -691,15 +712,23 @@ export default function CreateTemplatePage() {
     setSeed(pat.seed || (Date.now() % 100000));
   }
 
-  function deleteTemplate(id) {
+
+    async function deleteTemplate(id) {
     const ok = window.confirm(
       "Are you sure you want to delete this template?"
     );
     if (!ok) return;
-    const next = templates.filter((t) => t.id !== id);
-    setTemplates(next);
-    localStorage.setItem("crt_templates_v1", JSON.stringify(next));
+
+    try {
+      await deleteTemplateApi(id); // call Laravel
+
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      console.error("Error deleting template", err);
+      alert("Error while deleting template from database.");
+    }
   }
+
 
   function handleImportJSON(event) {
     const file = event.target.files?.[0];
@@ -978,7 +1007,8 @@ export default function CreateTemplatePage() {
                   </h3>
 
                   {/* Background */}
-                  <div>
+
+                  {/*}<div>
                     <label className="block text-sm font-medium mb-2">
                       Background
                     </label>
@@ -1000,7 +1030,7 @@ export default function CreateTemplatePage() {
                       />
                     </div>
                   </div>
-
+*/}
                   {/* Palette colors */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
