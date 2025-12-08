@@ -22,10 +22,13 @@ import {
   Droplet,
   Waves,
   MinusSquare,
-  Search
+  Search,
+  Lock,
+  Unlock,
 } from "lucide-react"
 import { Stage, Layer, Line, Rect, Group, Text, Transformer, Circle } from "react-konva"
 import { fetchTemplates } from "../api/templatesApi"
+
 
 
 /* ------------------------- Constants & Palettes ------------------------- */
@@ -71,6 +74,10 @@ const FOUR_BASE_COLORS = [
   { name: "black", value: "#000000" },
 ]
 
+const MAX_ITEMS_REF = 2500;  
+const DENSITY_MULT = 1;
+const DEFAULT_PREVIEW_SIZE = 500;
+
 /* ------------------------- Helper: default state snapshot ------------------------- */
 const defaultMeasurements = [
   { wall: "A", length: 300 },
@@ -79,10 +86,118 @@ const defaultMeasurements = [
   { wall: "D", length: 200 },
 ]
 
+// ==== Helpers pattern chip (copié mn CreateTemplatePage) ====
+
+// RNG déterministe b seed
+function mulberry32(seed) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// clamp
+function clamp(v, a, b) {
+  return Math.max(a, Math.min(b, v));
+}
+
+// rectangle mroundi (pour "squares")
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// dessin d'une seule shape (nafs style dyal CreateTemplatePage)
+function drawChipShape(ctx, x, y, size, fill, type, rng, wScale, hScale) {
+  const localRng = typeof rng === "function" ? rng : () => Math.random();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(wScale, hScale);
+  ctx.fillStyle = fill;
+
+  // shadow khfif
+  const blur = clamp(size * 0.06, 1, 6);
+  const offset = size * 0.04;
+  ctx.shadowColor = "rgba(0,0,0,0.18)";
+  ctx.shadowBlur = blur;
+  ctx.shadowOffsetX = offset;
+  ctx.shadowOffsetY = offset;
+
+  let angle = 0;
+  if (type === "tile") {
+    angle = localRng() * Math.PI * 2;
+  } else if (type === "squares" || type === "stars" || type === "flakes") {
+    angle = (localRng() - 0.5) * 0.6;
+  }
+  ctx.rotate(angle);
+  ctx.beginPath();
+
+  if (type === "circles") {
+    ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (type === "squares") {
+    const r = Math.max(2, size * 0.15);
+    roundRect(ctx, -size / 2, -size / 2, size, size, r);
+    ctx.fill();
+  } else if (type === "stars") {
+    const spikes = 5;
+    const outer = size / 2;
+    const inner = outer * 0.5;
+    let a = (Math.PI / 2) * 3;
+    ctx.moveTo(0, -outer);
+    for (let i = 0; i < spikes; i++) {
+      ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+      a += Math.PI / spikes;
+      ctx.lineTo(Math.cos(a) * inner, Math.sin(a) * inner);
+      a += Math.PI / spikes;
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else if (type === "tile") {
+    const h = (Math.sqrt(3) / 2) * size;
+    ctx.moveTo(0, -h / 2);
+    ctx.lineTo(-size / 2, h / 2);
+    ctx.lineTo(size / 2, h / 2);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // flakes : polygone irrégulier
+    const points = 6 + Math.floor(localRng() * 4);
+    const radius = size / 2;
+    for (let i = 0; i < points; i++) {
+      const theta = (i / points) * Math.PI * 2 + (localRng() - 0.5) * 0.3;
+      const rr = radius * (0.6 + localRng() * 0.8);
+      const px = Math.cos(theta) * rr;
+      const py = Math.sin(theta) * rr;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // reset shadow
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+
+  ctx.restore();
+}
+
+
 /* ------------------------- Main Component ------------------------- */
 const Decoration = () => {
 
-  const navigate = useNavigate(); // ← ADD THIS
+  const navigate = useNavigate(); 
 
   /* ------------------------- UI / Mode state ------------------------- */
   const [designMode, setDesignMode] = useState("room") // 'room' | 'chip'
@@ -95,6 +210,11 @@ const Decoration = () => {
   const [showFourBasePicker, setShowFourBasePicker] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState(null)
+  const [chipPatternImage, setChipPatternImage] = useState(null);
+
+  const [chipPalette, setChipPalette] = useState([])
+  const [chipEditingIndex, setChipEditingIndex] = useState(null)
+
 
   const [showBaseSwatchModal, setShowBaseSwatchModal] = useState(false)
   const [showAddColorCard, setShowAddColorCard] = useState(false)
@@ -125,11 +245,11 @@ const Decoration = () => {
   const [isDrawing, setIsDrawing] = useState(false)
   const [drawingMode, setDrawingMode] = useState(true)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true)
-  const [sidebarView, setSidebarView] = useState("main") // 'main' | 'products'
+  const [sidebarView, setSidebarView] = useState("main") 
   const [selectedProducts, setSelectedProducts] = useState([])
 
-  const [lines, setLines] = useState([]) // freehand lines
-  const [shapes, setShapes] = useState([]) // generated shapes
+  const [lines, setLines] = useState([]) 
+  const [shapes, setShapes] = useState([]) 
   const [selectedShapeId, setSelectedShapeId] = useState(null)
 
   /* ------------------------- Measurements & view ------------------------- */
@@ -220,7 +340,7 @@ const Decoration = () => {
       try {
         fitStageToParent()
       } catch (err) {
-        // ignore
+        
       }
     }, 0)
     console.log("App reset to initial state")
@@ -327,7 +447,6 @@ const Decoration = () => {
 
 
   useEffect(() => {
-  // ila ma7linaش المودال، ما ندير والو
   if (!showTemplatePicker) return
 
   const loadTemplates = async () => {
@@ -336,7 +455,6 @@ const Decoration = () => {
       setTemplatesError(null)
 
       const data = await fetchTemplates()
-      // نتأكد أنه array
       const arr = Array.isArray(data) ? data : []
 
       setTemplates(arr)
@@ -552,6 +670,138 @@ const Decoration = () => {
     return out
   }, [])
 
+    // -------------------- Generate chip pattern from selectedTemplate + baseColor --------------------
+useEffect(() => {
+  if (!selectedTemplate) {
+    setChipPatternImage(null);
+    return;
+  }
+
+  // خاص stageSize يكون معروف
+  const stageW = Math.round(stageSize.width);
+  const stageH = Math.round(stageSize.height);
+  if (!stageW || !stageH) return;
+
+const palette =
+  chipPalette && chipPalette.length > 0
+    ? chipPalette
+    : Array.isArray(selectedTemplate.palette)
+    ? selectedTemplate.palette
+    : [];
+
+  if (palette.length === 0) {
+    setChipPatternImage(null);
+    return;
+  }
+
+  const pat =
+    selectedTemplate.patternParams ||
+    selectedTemplate.pattern_params ||
+    {};
+
+  const shapeType   = pat.shapeType   || "flakes";
+  const widthScale  = pat.widthScale  ?? 1;
+  const heightScale = pat.heightScale ?? 1;
+  const minSize     = pat.minSize     ?? 20;
+  const maxSize     = pat.maxSize     ?? 80;
+  const density     = pat.density     ?? 30;
+  const seed        = pat.seed        ?? 12345;
+
+  // ---- نفس ال logic ديال CreateTemplatePage ----
+  const refSize   = selectedTemplate.canvasSize || DEFAULT_PREVIEW_SIZE;
+  const refArea   = refSize * refSize;
+  const stageArea = stageW * stageH;
+
+  const rng = mulberry32(Number(seed));
+  const densityFraction = clamp(density / 100, 0, 1);
+
+  // عدد الشيبس ف preview 500x500
+  const baseApproxCount = Math.max(
+    1,
+    Math.floor(
+      1 + densityFraction * (MAX_ITEMS_REF - 1) * DENSITY_MULT
+    )
+  );
+
+  // نضربو ف ratio ديال المساحة باش نفس الكثافة تبقى
+  const areaScale = stageArea / refArea;
+  const finalCount = Math.max(
+    1,
+    Math.floor(baseApproxCount * areaScale)
+  );
+
+  // weights من pct
+  let weights = palette.map((c) => Math.max(0, c.pct || 0));
+  let totalWeight = weights.reduce((s, w) => s + w, 0);
+
+  if (totalWeight <= 0 || weights.length === 0) {
+    weights = palette.map(() => 1);
+    totalWeight = weights.reduce((s, w) => s + w, 0);
+  }
+
+  const cumulative = [];
+  let acc = 0;
+  for (let w of weights) {
+    acc += w;
+    cumulative.push(acc);
+  }
+
+  function pickColorIndex(randomValue) {
+    const target = randomValue * totalWeight;
+    for (let i = 0; i < cumulative.length; i++) {
+      if (target <= cumulative[i]) return i;
+    }
+    return cumulative.length - 1;
+  }
+
+  // نرسمو مباشرة على canvas قدّ stage كامل
+  const canvas = document.createElement("canvas");
+  canvas.width = stageW;
+  canvas.height = stageH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  // الخلفية = baseColor
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, stageW, stageH);
+
+  for (let i = 0; i < finalCount; i++) {
+    const x = rng() * stageW;
+    const y = rng() * stageH;
+    const unitFactor = rng();
+    const colorIndex = pickColorIndex(rng());
+    const size = minSize + unitFactor * (maxSize - minSize);
+    const color = palette[colorIndex]?.value || "#000";
+
+    const itemRng = mulberry32(Math.floor(unitFactor * 1000000));
+
+    drawChipShape(
+      ctx,
+      x,
+      y,
+      size,
+      color,
+      shapeType,
+      itemRng,
+      widthScale,
+      heightScale
+    );
+  }
+
+  let cancelled = false;
+  const img = new window.Image();
+  img.onload = () => {
+    if (!cancelled) setChipPatternImage(img);
+  };
+  img.src = canvas.toDataURL("image/png");
+
+  return () => {
+    cancelled = true;
+  };
+}, [selectedTemplate, baseColor, stageSize.width, stageSize.height, chipPalette]);
+
+
+
   const currentView = designMode === "chip" ? chipView : roomView
 
   // UPDATED: onMenuItemClick now handles "Create Template" directly.
@@ -574,9 +824,78 @@ const Decoration = () => {
     console.log(`${name} selected`)
   }
 
-  const onAddColorClick = () => {
-    setShowAddColorCard(true)
-  }
+const onAddColorClick = () => {
+  setChipEditingIndex(null)   // mode "add"
+  setShowAddColorCard(true)
+}
+
+// add OR edit chip color (used by Add Color modal)
+const applyChipColor = (colorObj) => {
+  setChipPalette((prev) => {
+    // add new
+    if (chipEditingIndex === null || chipEditingIndex === undefined) {
+      const defaultPct =
+        prev.length === 0
+          ? 100
+          : Math.max(5, Math.round(100 / (prev.length + 1)))
+
+      return [
+        ...prev,
+        {
+          name: colorObj.name,
+          value: colorObj.value,
+          pct: defaultPct,
+          locked: false,
+        },
+      ]
+    }
+
+    // edit existing
+    return prev.map((c, idx) =>
+      idx === chipEditingIndex
+        ? { ...c, name: colorObj.name, value: colorObj.value }
+        : c
+    )
+  })
+
+  setShowAddColorCard(false)
+  setChipEditingIndex(null)
+}
+
+// change percentage (from slider / input)
+const handleChipPctChange = (index, raw) => {
+  setChipPalette((prev) => {
+    const item = prev[index]
+    // ila locked → ma nbdlo walou
+    if (!item || item.locked) return prev
+
+    let val = Number(raw)
+    if (!Number.isFinite(val)) val = 0
+    val = Math.max(0, Math.min(100, val))
+
+    return prev.map((c, i) =>
+      i === index ? { ...c, pct: val } : c
+    )
+  })
+}
+
+// toggle lock
+const toggleChipLock = (index) => {
+  setChipPalette((prev) =>
+    prev.map((c, i) =>
+      i === index ? { ...c, locked: !c.locked } : c
+    )
+  )
+}
+
+// delete color (except if locked)
+const deleteChipColor = (index) => {
+  setChipPalette((prev) => {
+    const item = prev[index]
+    if (item?.locked) return prev   
+    return prev.filter((_, i) => i !== index)
+  })
+}
 
   const applyColor = (colorObj) => {
     setBaseColor(colorObj.value)
@@ -684,10 +1003,18 @@ const Decoration = () => {
           onTouchEnd={selectedRoom ? endDrawing : undefined}
         >
           <Layer>
-            {designMode === "chip" && (
-              <Rect x={0} y={0} width={stageSize.width} height={stageSize.height} fill={baseColor} listening={false} />
-            )}
-
+{designMode === "chip" && (
+    <Rect
+      x={0}
+      y={0}
+      width={stageSize.width}
+      height={stageSize.height}
+      fill={chipPatternImage ? undefined : baseColor}
+      fillPatternImage={chipPatternImage || null}
+      fillPatternRepeat={chipPatternImage ? "no-repeat" : "no-repeat"}
+      listening={false}
+    />
+  )}
             {designMode !== "chip" &&
               lines.map((l, idx) => (
                 <Line key={idx} points={l.points} stroke="#111827" strokeWidth={3} lineCap="round" lineJoin="round" />
@@ -961,8 +1288,8 @@ const Decoration = () => {
 
             {designMode === "chip" ? (
               <>
-                <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
-                  <h3 className="font-semibold text-gray-900 text-lg mb-3">Base color</h3>
+                <div className="border-b border-gray-400 pb-3">
+                          <h3 className=" font-semibold text-gray-900 text-lg">Base Color</h3>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => setShowBaseSwatchModal(true)}
@@ -972,7 +1299,123 @@ const Decoration = () => {
                     />
                     <div className="text-sm text-gray-700 capitalize">{baseColorName.replaceAll("_", " ")}</div>
                   </div>
+                  
                 </div>
+    <div className="mt-4 border-b  pb-3">
+
+      <div className="flex items-center justify-between mb-2">
+        <h3 className=" font-semibold text-gray-900 text-lg">
+          Chip colors
+        </h3>
+        <div
+    className={`text-[11px] px-2 py-1 rounded-full font-medium ${
+      chipPalette.length > 0
+        ? "bg-gray-900 text-white"  // 100% mode
+        : "bg-gray-200 text-gray-600" // 0% mode
+    }`}
+  >
+    {chipPalette.length > 0 ? "100%" : "0%"}
+  </div>
+      </div>
+
+      {chipPalette.length === 0 && (
+        <p className="text-xs text-gray-500">
+          Choose a template or add colors to start.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {chipPalette.map((c, index) => (
+          <div
+            key={index}
+            className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+          >
+            {/* first row: swatch + name + icons */}
+            <div className="flex items-center justify-between gap-2">
+              <button
+  type="button"
+  onClick={() => {
+    
+    if (c.locked) return
+    setChipEditingIndex(index)
+    setShowAddColorCard(true)
+  }}
+  className={`flex items-center gap-3 ${
+    c.locked
+      ? "cursor-not-allowed opacity-60"
+      : "cursor-pointer"
+  }`}
+>
+  <span
+    className="w-8 h-8 rounded shadow-sm border"
+    style={{ backgroundColor: c.value }}
+  />
+  <span className="text-xs font-medium text-gray-900">
+    {(c.name || `Color ${index + 1}`).replaceAll("_", " ")}
+  </span>
+</button>
+
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleChipLock(index)}
+                  className="text-gray-500 hover:text-gray-700"
+                  title={c.locked ? "Unlock" : "Lock"}
+                >
+                  {c.locked ? (
+                    <Lock className="w-4 h-4" />
+                  ) : (
+                    <Unlock className="w-4 h-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteChipColor(index)}
+                  className={`text-red-500 hover:text-red-600 ${
+                    c.locked ? "opacity-40 cursor-not-allowed" : ""
+                  }`}
+                  title={c.locked ? "Locked" : "Delete"}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* second row: percentage input + slider */}
+            <div className="mt-2 flex items-center gap-3">
+              <input
+                type="number"
+                className="w-14 px-2 py-1 text-xs border border-gray-300 rounded"
+                value={c.pct ?? 0}
+                min={0}
+                max={100}
+                disabled={c.locked}
+                onChange={(e) =>
+                  handleChipPctChange(index, e.target.value)
+                }
+              />
+              <span className="text-[11px] text-gray-500">%</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={c.pct ?? 0}
+                disabled={c.locked}
+
+                onChange={(e) =>
+                  handleChipPctChange(index, e.target.value)
+                }
+                className="flex-1"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+
 
                 {showBaseSwatchModal && (
                   <div
@@ -1206,8 +1649,8 @@ const Decoration = () => {
                   onChange={(e) => setTemplateSearch(e.target.value)}
                   placeholder="Search templates..."
                   className="w-full pl-9 pr-3 py-2 rounded-full border border-gray-200 text-xs md:text-sm outline-none
-                             focus:ring-2 focus:ring-gray-300 focus:border-gray-400
-                             transition-all shadow-sm focus:shadow-md"
+                            focus:ring-2 focus:ring-gray-300 focus:border-gray-400
+                            transition-all shadow-sm focus:shadow-md"
                 />
               </div>
             </div>
@@ -1255,12 +1698,25 @@ const Decoration = () => {
                   <button
                     key={tpl.id}
                     type="button"
-                    onClick={() => {
-                      setSelectedTemplate(tpl)       
-                      setShowTemplatePicker(false)      
-                      console.log("Template selected in Decoration:", tpl.name)
-                      setChipView({ scale: 1, pos: { x: 0, y: 0 } })
-                    }}
+onClick={() => {
+  setSelectedTemplate(tpl)
+
+  const tplPalette = Array.isArray(tpl.palette)
+    ? tpl.palette.map((c) => ({
+        ...c,
+        // نحافظ على locked إلى كان فـ DB
+        locked: c.locked ?? false,
+      }))
+    : []
+
+  setChipPalette(tplPalette)
+
+  setShowTemplatePicker(false)
+  console.log("Template selected in Decoration:", tpl.name)
+  setChipView({ scale: 1, pos: { x: 0, y: 0 } })
+}}
+
+
                     className="group relative flex flex-col items-center gap-2 p-2 rounded-lg hover:shadow-md transition-all bg-white"
                   >
                     <div className="relative w-24 h-24 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-xl shadow-sm border border-gray-200 overflow-hidden bg-gray-50 flex items-center justify-center transition-transform group-hover:-translate-y-0.5">
@@ -1364,7 +1820,7 @@ const Decoration = () => {
             {COLORS.map((c) => (
               <button
                 key={c.name}
-                onClick={() => applyColor({ name: c.name, value: c.value })}
+                onClick={() => applyChipColor({ name: c.name, value: c.value })}
                 className="relative flex flex-col items-center gap-3 p-2 rounded-lg hover:shadow-sm transition"
                 title={c.name.replaceAll("_", " ")}
               >
@@ -1390,7 +1846,8 @@ const Decoration = () => {
             {CUSTOM_COLORS.map((c) => (
               <button
                 key={c.name}
-                onClick={() => applyColor({ name: c.name, value: c.value })}
+                onClick={() => applyChipColor({ name: c.name, value: c.value })}
+
                 className="relative flex flex-col items-center gap-3 p-2 rounded-lg hover:shadow-sm transition"
                 title={c.name}
               >
